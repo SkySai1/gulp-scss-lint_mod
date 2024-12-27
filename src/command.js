@@ -14,54 +14,63 @@ var scssLintCodes = {
   '127': 'You need to have Ruby and scss-lint gem installed'
 };
 
-function generateCommand(filePaths, options) {
-  var commandParts = ['scss-lint'],
-      excludes = ['bundleExec',
-                  'filePipeOutput',
-                  'reporterOutput',
-                  'endlessReporter',
-                  'src',
-                  'shell',
-                  'reporterOutputFormat',
-                  'customReport',
-                  'maxBuffer',
-                  'endless',
-                  'verbose',
-                  'sync'];
+function generateCommandParts(filePaths, options) {
+  var commandParts = ['scss-lint'];
+  var excludes = [
+    'bundleExec',
+    'filePipeOutput',
+    'reporterOutput',
+    'endlessReporter',
+    'src',
+    'shell',
+    'reporterOutputFormat',
+    'customReport',
+    'maxBuffer',
+    'endless',
+    'verbose',
+    'sync'
+  ];
 
   if (options.bundleExec) {
     commandParts.unshift('bundle', 'exec');
     excludes.push('bundleExec');
   }
 
-  var optionsArgs = dargs(options, {excludes: excludes});
-
+  var optionsArgs = dargs(options, { excludes: excludes });
   return commandParts.concat(filePaths, optionsArgs);
 }
 
-function execCommand(command, options) {
+function execCommand(commandParts, options) {
   return new Promise(function(resolve, reject) {
     var commandOptions = {
       env: process.env,
       cwd: process.cwd(),
-      maxBuffer: options.maxBuffer || 300 * 1024,
-      shell: options.shell
+      maxBuffer: options.maxBuffer || 300 * 1024
     };
 
-    if (options.sync || options.endless) {
-      var commandResult = child_process.execFileSync(command[0], command.slice(1));
-      var error = null;
+    const process = child_process.spawn(commandParts[0], commandParts.slice(1), commandOptions);
+    let stdout = '';
+    let stderr = '';
 
-      if (commandResult.status) {
-        error = {code: commandResult.status};
+    process.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    process.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    process.on('close', (code) => {
+      if (code === 0) {
+        resolve({ error: null, report: stdout });
+      } else {
+        resolve({ error: { code: code, message: stderr }, report: stdout });
       }
+    });
 
-      resolve({error: error, report: commandResult.stdout});
-    } else {
-      child_process.execFile(command[0], command.slice(1), commandOptions, function(error, report) {
-        resolve({error: error, report: report});
-      });
-    }
+    process.on('error', (error) => {
+      reject(error);
+    });
   });
 }
 
@@ -70,9 +79,9 @@ function configFileReadError(report, options) {
   return re.test(report);
 }
 
-function execLintCommand(command, options) {
+function execLintCommand(commandParts, options) {
   return new Promise(function(resolve, reject) {
-    execCommand(command, options).then(function(result) {
+    execCommand(commandParts, options).then(function(result) {
       var error = result.error;
       var report = result.report;
 
@@ -84,14 +93,14 @@ function execLintCommand(command, options) {
             reject(scssLintCodes[error.code]);
           }
         } else if (error.code) {
-          reject('Error code ' + error.code + '\n' + error);
+          reject('Error code ' + error.code + '\n' + error.message);
         } else {
-          reject(error);
+          reject(error.message);
         }
       } else if (error && error.code === 1 && report.length === 0) {
-        reject('Error code ' + error.code + '\n' + error);
-      } else  {
-        if (options.format === 'JSON'){
+        reject('Error code ' + error.code + '\n' + error.message);
+      } else {
+        if (options.format === 'JSON') {
           resolve([JSON.parse(report)]);
         } else {
           checkstyle.toJSON(report, resolve);
@@ -102,11 +111,11 @@ function execLintCommand(command, options) {
 }
 
 module.exports = function(filePaths, options) {
-  var command = generateCommand(filePaths, options);
+  var commandParts = generateCommandParts(filePaths, options);
 
   if (options.verbose) {
-    console.log(command.join(' '));
+    console.log(commandParts.join(' '));
   }
 
-  return execLintCommand(command, options);
+  return execLintCommand(commandParts, options);
 };
